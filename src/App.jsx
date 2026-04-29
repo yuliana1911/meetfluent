@@ -40,29 +40,35 @@ let _usageInfo = null;
 function getUsageInfo() { return _usageInfo; }
 
 async function callClaude(messages, systemPrompt) {
-  // Intentar primero el proxy /api/claude (producción)
+  // Try proxy first (Vercel production)
   try {
     const response = await fetch("/api/claude", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages, system: systemPrompt }),
     });
-    if (response.ok) {
-      const data = await response.json();
-      if (data.usage) _usageInfo = data.usage;
-      return data.content?.map(b => b.text || "").join("") || "";
+
+    // Check if response is JSON (not HTML from SPA fallback)
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error("NO_PROXY"); // got HTML = API function doesn't exist
     }
+
+    const data = await response.json();
+
     if (response.status === 429) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error("RATE_LIMIT:" + (data.message || "Límite diario alcanzado"));
+      throw new Error("RATE_LIMIT:" + (data.message || "Límite alcanzado"));
     }
-    // Si el proxy responde con 404 o error de servidor, caer al modo directo
-    if (response.status >= 500 || response.status === 404) throw new Error("NO_PROXY");
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || "HTTP " + response.status);
+    if (!response.ok) {
+      throw new Error(data.error || "Error del servidor");
+    }
+    if (data.usage) _usageInfo = data.usage;
+    return (data.content || []).map(b => b.text || "").join("") || "";
+
   } catch (e) {
-    if (e.message?.startsWith("RATE_LIMIT:")) throw e;
-    // Fallback: llamar directo a Anthropic con API key del navegador
+    if (e.message && e.message.startsWith("RATE_LIMIT:")) throw e;
+
+    // Proxy not available — fallback to direct API with local key
     const apiKey = localStorage.getItem("mf_apikey");
     if (!apiKey) throw new Error("NEED_API_KEY");
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -455,7 +461,6 @@ export default function App() {
   // Usage / API key state
   const [usageInfo, setUsageInfo]   = useState(null);
   const [needsApiKey, setNeedsApiKey] = useState(false);
-  const [proxyAvailable, setProxyAvailable] = useState(true);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyError, setApiKeyError] = useState("");
   const [validatingKey, setValidatingKey] = useState(false);
@@ -505,17 +510,6 @@ export default function App() {
   const debounceRef     = useRef(null);    // auto-suggest debounce
   const genSugRef       = useRef(null);
   const autoSugRef      = useRef(false);   // always-current autoSug value
-
-  // Test proxy availability on mount
-  useEffect(() => {
-    fetch("/api/claude", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [{ role: "user", content: "ping" }], system: "Reply: ok" }),
-    }).then(r => {
-      if (r.status === 404 || r.status === 0) setProxyAvailable(false);
-    }).catch(() => setProxyAvailable(false));
-  }, []);
 
   // Load history from localStorage on mount
   useEffect(() => {
