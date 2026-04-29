@@ -455,6 +455,7 @@ export default function App() {
   // Usage / API key state
   const [usageInfo, setUsageInfo]   = useState(null);
   const [needsApiKey, setNeedsApiKey] = useState(false);
+  const [proxyAvailable, setProxyAvailable] = useState(true);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyError, setApiKeyError] = useState("");
   const [validatingKey, setValidatingKey] = useState(false);
@@ -505,6 +506,17 @@ export default function App() {
   const genSugRef       = useRef(null);
   const autoSugRef      = useRef(false);   // always-current autoSug value
 
+  // Test proxy availability on mount
+  useEffect(() => {
+    fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "ping" }], system: "Reply: ok" }),
+    }).then(r => {
+      if (r.status === 404 || r.status === 0) setProxyAvailable(false);
+    }).catch(() => setProxyAvailable(false));
+  }, []);
+
   // Load history from localStorage on mount
   useEffect(() => {
     const keys = storage.list("meeting:").keys;
@@ -533,7 +545,7 @@ export default function App() {
       if (u) setUsageInfo(u);
       return result;
     } catch(e) {
-      if (e.message === "NEED_API_KEY") {
+      if (e.message === "NEED_API_KEY" || e.message === "NO_PROXY") {
         setNeedsApiKey(true);
         throw e;
       }
